@@ -1,121 +1,137 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-# =========================
-# BASIC CONFIG (Defaults)
-# =========================
-DEFAULT_HOSTNAME="nixos"
-USERNAME="user"
-TIMEZONE="Europe/Berlin"
+# NixOS Minimal Installation Script
+# WARNUNG: Dieses Script löscht ALLE Daten auf der Ziel-Festplatte!
 
-# =========================
-# Hostname abfragen
-# =========================
-echo
-read -rp "Hostname [${DEFAULT_HOSTNAME}]: " HOSTNAME
-HOSTNAME=${HOSTNAME:-$DEFAULT_HOSTNAME}
+# Konfiguration
+DISK="/dev/sda"  # Ändere dies zu deiner Festplatte (z.B. /dev/nvme0n1)
+HOSTNAME="nixos-minimal"
 
-echo ">>> Hostname gesetzt auf: $HOSTNAME"
-
-# =========================
-# Disk-Auswahl
-# =========================
-echo
-echo "=== Verfügbare Festplatten ==="
-echo
-
-lsblk -d -o NAME,SIZE,MODEL | nl -w2 -s'. '
-
-echo
-read -rp "Welche Platte installieren? (Nummer): " DISK_NUM
-
-DISK_NAME=$(lsblk -d -o NAME | sed -n "${DISK_NUM}p")
-
-if [ -z "$DISK_NAME" ]; then
-  echo "Ungültige Auswahl. Abbruch."
-  exit 1
+echo "======================================"
+echo "NixOS Minimal Installation"
+echo "======================================"
+echo "Ziel-Festplatte: $DISK"
+echo "Hostname: $HOSTNAME"
+echo ""
+echo "WARNUNG: Alle Daten auf $DISK werden gelöscht!"
+read -p "Fortfahren? (yes/no): " -r
+if [[ ! $REPLY =~ ^yes$ ]]; then
+    echo "Installation abgebrochen."
+    exit 1
 fi
 
-DISK="/dev/$DISK_NAME"
+# Partitionierung
+echo ""
+echo "==> Partitioniere Festplatte..."
+parted "$DISK" -- mklabel gpt
+parted "$DISK" -- mkpart ESP fat32 1MiB 512MiB
+parted "$DISK" -- set 1 esp on
+parted "$DISK" -- mkpart primary 512MiB 100%
 
-echo
-echo ">>> GEWÄHLT: $DISK"
-read -rp ">>> ALLES auf $DISK wird GELÖSCHT. WEITER? (yes): " CONFIRM
-
-if [ "$CONFIRM" != "yes" ]; then
-  echo "Abgebrochen."
-  exit 1
+# Partition-Namen setzen (unterschiedlich für SATA/NVMe)
+if [[ $DISK == *"nvme"* ]]; then
+    BOOT="${DISK}p1"
+    ROOT="${DISK}p2"
+else
+    BOOT="${DISK}1"
+    ROOT="${DISK}2"
 fi
 
-# =========================
-# Partitionieren (UEFI)
-# =========================
-parted -s "$DISK" mklabel gpt
+# Formatierung
+echo ""
+echo "==> Formatiere Partitionen..."
+mkfs.fat -F 32 -n BOOT "$BOOT"
+mkfs.ext4 -L nixos "$ROOT"
 
-# EFI
-parted -s "$DISK" mkpart ESP fat32 1MiB 512MiB
-parted -s "$DISK" set 1 esp on
-
-# Root: von 512MiB bis "2GiB vor Ende"
-parted -s "$DISK" mkpart primary ext4 512MiB 100%-2GiB
-
-# Swap: letzte 2GiB
-parted -s "$DISK" mkpart primary linux-swap 100%-2GiB 100%
-
-# =========================
-# Formatieren
-# =========================
-mkfs.fat -F32 "${DISK}1"
-mkfs.ext4 "${DISK}2"
-mkswap "${DISK}3"
-
-# =========================
-# Mounten
-# =========================
-mount "${DISK}2" /mnt
+# Mount
+echo ""
+echo "==> Mounte Partitionen..."
+mount "$ROOT" /mnt
 mkdir -p /mnt/boot
-mount "${DISK}1" /mnt/boot
-swapon "${DISK}3"
+mount "$BOOT" /mnt/boot
 
-# =========================
-# Config generieren
-# =========================
+# Generiere Basis-Konfiguration
+echo ""
+echo "==> Generiere NixOS-Konfiguration..."
 nixos-generate-config --root /mnt
 
-# =========================
-# configuration.nix ergänzen
-# =========================
-cat >> /mnt/etc/nixos/configuration.nix <<EOF
+# Erstelle minimale configuration.nix
+cat > /mnt/etc/nixos/configuration.nix << 'EOF'
+{ config, pkgs, ... }:
 
-networking.hostName = "$HOSTNAME";
-time.timeZone = "$TIMEZONE";
+{
+  imports = [ ./hardware-configuration.nix ];
 
-users.users.$USERNAME = {
-  isNormalUser = true;
-  extraGroups = [ "wheel" ];
-};
+  # Bootloader
+  boot.loader.systemd-boot.enable = true;
+  boot.loader.efi.canTouchEfiVariables = true;
 
-services.openssh.enable = true;
-services.xserver.enable = false;
+  # Netzwerk
+  networking.hostName = "HOSTNAME_PLACEHOLDER";
+  networking.networkmanager.enable = true;
 
-environment.systemPackages = with pkgs; [
-  vim
-  git
-  curl
-];
+  # Zeitzone
+  time.timeZone = "Europe/Berlin";
 
-security.sudo.wheelNeedsPassword = false;
+  # Locale
+  i18n.defaultLocale = "de_DE.UTF-8";
+  console = {
+    font = "Lat2-Terminus16";
+    keyMap = "de";
+  };
+
+  # User
+  users.users.user = {
+    isNormalUser = true;
+    extraGroups = [ "wheel" "networkmanager" ];
+    initialPassword = "changeme";
+  };
+
+  # Minimale System-Pakete
+  environment.systemPackages = with pkgs; [
+    vim
+    wget
+    git
+    htop
+  ];
+
+  # SSH (optional)
+  services.openssh.enable = true;
+
+  # Automatische Garbage Collection
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 30d";
+  };
+
+  # Flakes aktivieren (optional, aber empfohlen)
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
+  system.stateVersion = "24.11";
+}
 EOF
 
-# =========================
-# Installieren
-# =========================
+# Hostname einsetzen
+sed -i "s/HOSTNAME_PLACEHOLDER/$HOSTNAME/g" /mnt/etc/nixos/configuration.nix
+
+# Installation
+echo ""
+echo "==> Installiere NixOS..."
 nixos-install --no-root-passwd
 
-echo
-echo ">>> Setze Passwort für $USERNAME"
-nixos-enter --root /mnt -c "passwd $USERNAME"
-
-echo
-echo ">>> Installation abgeschlossen 🎉"
-echo ">>> reboot, USB raus"
+echo ""
+echo "======================================"
+echo "Installation abgeschlossen!"
+echo "======================================"
+echo ""
+echo "Nächste Schritte:"
+echo "1. Reboote das System: reboot"
+echo "2. Login mit User 'user' und Passwort 'changeme'"
+echo "3. Ändere das Passwort: passwd"
+echo "4. Root-Passwort setzen: sudo passwd root"
+echo ""
+echo "Konfiguration bearbeiten:"
+echo "  sudo vim /etc/nixos/configuration.nix"
+echo "  sudo nixos-rebuild switch"
