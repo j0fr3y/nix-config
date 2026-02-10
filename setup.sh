@@ -1,95 +1,115 @@
 #!/usr/bin/env bash
 set -e
 
-echo "NixOS Installation Script"
+# =========================
+# BASIC CONFIG (Defaults)
+# =========================
+DEFAULT_HOSTNAME="nixos"
+USERNAME="user"
+TIMEZONE="Europe/Berlin"
 
+# =========================
 # Hostname abfragen
-read -p "Hostname für diesen Server: " HOSTNAME
+# =========================
+echo
+read -rp "Hostname [${DEFAULT_HOSTNAME}]: " HOSTNAME
+HOSTNAME=${HOSTNAME:-$DEFAULT_HOSTNAME}
 
-# WICHTIG: Disk anpassen falls nötig
-DISK="/dev/sda"
+echo ">>> Hostname gesetzt auf: $HOSTNAME"
 
-echo "Verwende Disk: $DISK"
-read -p "WARNUNG: $DISK wird komplett gelöscht! Fortfahren? (yes/no) " CONFIRM
+# =========================
+# Disk-Auswahl
+# =========================
+echo
+echo "=== Verfügbare Festplatten ==="
+echo
+
+lsblk -d -o NAME,SIZE,MODEL | nl -w2 -s'. '
+
+echo
+read -rp "Welche Platte installieren? (Nummer): " DISK_NUM
+
+DISK_NAME=$(lsblk -d -o NAME | sed -n "${DISK_NUM}p")
+
+if [ -z "$DISK_NAME" ]; then
+  echo "Ungültige Auswahl. Abbruch."
+  exit 1
+fi
+
+DISK="/dev/$DISK_NAME"
+
+echo
+echo ">>> GEWÄHLT: $DISK"
+read -rp ">>> ALLES auf $DISK wird GELÖSCHT. WEITER? (yes): " CONFIRM
+
 if [ "$CONFIRM" != "yes" ]; then
-    echo "Abgebrochen."
-    exit 1
+  echo "Abgebrochen."
+  exit 1
 fi
 
-# Alle Partitionen unmounten falls gemountet
-umount ${DISK}* 2>/dev/null || true
+# =========================
+# Partitionieren (UEFI)
+# =========================
+parted -s "$DISK" mklabel gpt
+parted -s "$DISK" mkpart ESP fat32 1MiB 512MiB
+parted -s "$DISK" set 1 esp on
+parted -s "$DISK" mkpart primary ext4 512MiB -2GiB
+parted -s "$DISK" mkpart primary linux-swap -2GiB 100%
 
-# Disk komplett löschen
-echo "Lösche alte Partition-Tabelle..."
-wipefs -a $DISK
-
-# Partitionierung
-echo "Partitioniere $DISK..."
-parted $DISK -- mklabel gpt
-parted $DISK -- mkpart ESP fat32 1MB 512MB
-parted $DISK -- set 1 esp on
-parted $DISK -- mkpart primary 512MB 100%
-
-# Kurz warten damit Kernel die Partitionen sieht
-sleep 2
-
+# =========================
 # Formatieren
-echo "Formatiere Partitionen..."
-mkfs.fat -F 32 -n boot ${DISK}1
-mkfs.ext4 -L nixos ${DISK}2 -F
+# =========================
+mkfs.fat -F32 "${DISK}1"
+mkfs.ext4 "${DISK}2"
+mkswap "${DISK}3"
 
-# Kurz warten
-sleep 1
-
+# =========================
 # Mounten
-echo "Mounte Partitionen..."
-mount ${DISK}2 /mnt
+# =========================
+mount "${DISK}2" /mnt
 mkdir -p /mnt/boot
-mount ${DISK}1 /mnt/boot
+mount "${DISK}1" /mnt/boot
+swapon "${DISK}3"
 
-# Prüfen ob gemountet
-if ! mountpoint -q /mnt; then
-    echo "ERROR: /mnt ist nicht gemountet!"
-    exit 1
-fi
+# =========================
+# Config generieren
+# =========================
+nixos-generate-config --root /mnt
 
-echo "Partitionen erfolgreich gemountet:"
-lsblk $DISK
-df -h /mnt
+# =========================
+# configuration.nix ergänzen
+# =========================
+cat >> /mnt/etc/nixos/configuration.nix <<EOF
 
-# Git Repo URL
-REPO_URL="https://github.com/j0fr3y/nix-config.git"
+networking.hostName = "$HOSTNAME";
+time.timeZone = "$TIMEZONE";
 
-# Config-Repo clonen
-echo "Clone Config-Repository..."
-nix-shell -p git --run "git clone $REPO_URL /mnt/etc/nixos"
+users.users.$USERNAME = {
+  isNormalUser = true;
+  extraGroups = [ "wheel" ];
+};
 
-# Hardware-Config generieren
-echo "Generiere Hardware-Configuration..."
-mkdir -p /mnt/etc/nixos/hosts/$HOSTNAME
-nixos-generate-config --root /mnt --show-hardware-config > /mnt/etc/nixos/hosts/$HOSTNAME/hardware-configuration.nix
+services.openssh.enable = true;
+services.xserver.enable = false;
 
-# Checken ob Host-Config existiert
-if [ ! -f "/mnt/etc/nixos/hosts/$HOSTNAME/configuration.nix" ]; then
-    echo "Keine Config für $HOSTNAME gefunden, erstelle Template..."
-    cat > /mnt/etc/nixos/hosts/$HOSTNAME/configuration.nix <<EOF
-{ config, pkgs, ... }:
+environment.systemPackages = with pkgs; [
+  vim
+  git
+  curl
+];
 
-{
-  imports = [
-    ./hardware-configuration.nix
-    ../../modules/common.nix
-  ];
-
-  networking.hostName = "$HOSTNAME";
-  system.stateVersion = "24.05";
-}
+security.sudo.wheelNeedsPassword = false;
 EOF
-fi
 
-# Installation
-echo "Starte NixOS Installation..."
-nixos-install --flake /mnt/etc/nixos#$HOSTNAME
+# =========================
+# Installieren
+# =========================
+nixos-install --no-root-passwd
 
-echo "Installation abgeschlossen!"
-echo "Bitte rebooten: reboot"
+echo
+echo ">>> Setze Passwort für $USERNAME"
+nixos-enter --root /mnt -c "passwd $USERNAME"
+
+echo
+echo ">>> Installation abgeschlossen 🎉"
+echo ">>> reboot, USB raus"
