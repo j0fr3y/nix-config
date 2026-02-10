@@ -1,13 +1,18 @@
-.PHONY: help desktop server home-desktop home-server update check clean
+.PHONY: help desktop server home-desktop home-server update check clean bootstrap
+
+HOSTNAME ?= $(shell hostname)
+TYPE ?= desktop
 
 help: ## Show this help message
 	@echo "Modular NixOS Configuration"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make <target>"
+	@echo "  make <target> [HOSTNAME=name]"
+	@echo ""
+	@echo "Current hostname: $(HOSTNAME)"
 	@echo ""
 	@echo "Targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 
 desktop: ## Build and switch to desktop NixOS configuration
 	sudo nixos-rebuild switch --flake .#desktop
@@ -42,3 +47,18 @@ build-desktop: ## Build desktop configuration without activating
 
 build-server: ## Build server configuration without activating
 	sudo nixos-rebuild build --flake .#server
+
+switch: ## Switch to configuration for current hostname
+	sudo nixos-rebuild switch --flake .#$(HOSTNAME)
+
+bootstrap: ## Bootstrap a new host (interactive)
+	@bash scripts/bootstrap.sh
+
+list-hosts: ## List all configured hosts
+	@echo "Configured hosts:"
+	@ls -1 hosts/ | grep -v common | grep -v hardware-configuration.nix.example
+
+add-host: ## Add a new host to the configuration (HOSTNAME=name TYPE=desktop|server)
+	@echo "Creating host: $(HOSTNAME) (type: $(TYPE))"
+	@mkdir -p hosts/$(HOSTNAME)
+	@echo "Run 'make bootstrap' for interactive setup or manually create configuration"

@@ -9,36 +9,33 @@
     };
   };
 
-  outputs = { self, nixpkgs, home-manager, ... }@inputs: {
+  outputs = { self, nixpkgs, home-manager, ... }@inputs: 
+  let
+    # Helper function to create NixOS configuration
+    mkSystem = hostname: type: nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ./hosts/${hostname}/configuration.nix
+        home-manager.nixosModules.home-manager
+        {
+          home-manager.useGlobalPkgs = true;
+          home-manager.useUserPackages = true;
+          home-manager.users.user = import ./home/${type}.nix;
+        }
+      ];
+    };
+  in {
     # NixOS configurations
     nixosConfigurations = {
-      # Example desktop configuration with Wayland
-      desktop = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
-          ./hosts/desktop/configuration.nix
-          home-manager.nixosModules.home-manager
-          {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.users.user = import ./home/desktop.nix;
-          }
-        ];
-      };
+      # Legacy configurations (for backwards compatibility)
+      desktop = mkSystem "desktop" "desktop";
+      server = mkSystem "server" "server";
 
-      # Example server configuration (headless)
-      server = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
-          ./hosts/server/configuration.nix
-          home-manager.nixosModules.home-manager
-          {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.users.user = import ./home/server.nix;
-          }
-        ];
-      };
+      # Add your laptops and servers here:
+      # Example: laptop1 = mkSystem "laptop1" "desktop";
+      # Example: laptop2 = mkSystem "laptop2" "desktop";
+      # Example: laptop3 = mkSystem "laptop3" "desktop";
+      # Example: server1 = mkSystem "server1" "server";
     };
 
     # Standalone home-manager configuration for non-NixOS systems
