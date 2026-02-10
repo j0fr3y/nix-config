@@ -81,6 +81,11 @@ cat > /mnt/etc/nixos/configuration.nix << 'EOF'
     keyMap = "de";
   };
 
+  # disk hiding
+  fileSystems."/boot" = {
+     options = [ "fmask=0077" "dmask=0077" ];
+   };
+
   # User
   users.users.user = {
     isNormalUser = true;
