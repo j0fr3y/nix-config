@@ -8,8 +8,8 @@
     ];
 
   # Bootloader Setup (Beispiel für systemd-boot, oft Standard)
-  boot.loader.systemd-boot.enable = true;
-  boot.loader.efi.canTouchEfiVariables = true;
+  #boot.loader.systemd-boot.enable = true;
+  #boot.loader.efi.canTouchEfiVariables = true;
 
   networking.hostName = "mein-server"; # Hostname setzen
 
