@@ -1,50 +1,77 @@
 #!/usr/bin/env bash
 set -e
 
-# Farben für Output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-NC='\033[0m'
-
-echo -e "${GREEN}NixOS Installation Script${NC}"
+echo "NixOS Installation Script"
 
 # Hostname abfragen
 read -p "Hostname für diesen Server: " HOSTNAME
 
-# Git Repo URL
-REPO_URL="https://github.com/j0fr3y/nix-config.git"  # Anpassen!
+# WICHTIG: Disk anpassen falls nötig
+DISK="/dev/sda"
+
+echo "Verwende Disk: $DISK"
+read -p "WARNUNG: $DISK wird komplett gelöscht! Fortfahren? (yes/no) " CONFIRM
+if [ "$CONFIRM" != "yes" ]; then
+    echo "Abgebrochen."
+    exit 1
+fi
+
+# Alle Partitionen unmounten falls gemountet
+umount ${DISK}* 2>/dev/null || true
+
+# Disk komplett löschen
+echo "Lösche alte Partition-Tabelle..."
+wipefs -a $DISK
 
 # Partitionierung
-echo -e "${GREEN}Partitioniere /dev/sda...${NC}"
-parted /dev/sda -- mklabel gpt
-parted /dev/sda -- mkpart primary 512MB 100%
-parted /dev/sda -- mkpart ESP fat32 1MB 512MB
-parted /dev/sda -- set 2 esp on
+echo "Partitioniere $DISK..."
+parted $DISK -- mklabel gpt
+parted $DISK -- mkpart ESP fat32 1MB 512MB
+parted $DISK -- set 1 esp on
+parted $DISK -- mkpart primary 512MB 100%
+
+# Kurz warten damit Kernel die Partitionen sieht
+sleep 2
 
 # Formatieren
-echo -e "${GREEN}Formatiere Partitionen...${NC}"
-mkfs.ext4 -L nixos /dev/sda1
-mkfs.fat -F 32 -n boot /dev/sda2
+echo "Formatiere Partitionen..."
+mkfs.fat -F 32 -n boot ${DISK}1
+mkfs.ext4 -L nixos ${DISK}2 -F
+
+# Kurz warten
+sleep 1
 
 # Mounten
-echo -e "${GREEN}Mounte Partitionen...${NC}"
-mount /dev/disk/by-label/nixos /mnt
+echo "Mounte Partitionen..."
+mount ${DISK}2 /mnt
 mkdir -p /mnt/boot
-mount /dev/disk/by-label/boot /mnt/boot
+mount ${DISK}1 /mnt/boot
+
+# Prüfen ob gemountet
+if ! mountpoint -q /mnt; then
+    echo "ERROR: /mnt ist nicht gemountet!"
+    exit 1
+fi
+
+echo "Partitionen erfolgreich gemountet:"
+lsblk $DISK
+df -h /mnt
+
+# Git Repo URL
+REPO_URL="https://github.com/j0fr3y/nix-config.git"
 
 # Config-Repo clonen
-echo -e "${GREEN}Clone Config-Repository...${NC}"
+echo "Clone Config-Repository..."
 nix-shell -p git --run "git clone $REPO_URL /mnt/etc/nixos"
 
 # Hardware-Config generieren
-echo -e "${GREEN}Generiere Hardware-Configuration...${NC}"
+echo "Generiere Hardware-Configuration..."
+mkdir -p /mnt/etc/nixos/hosts/$HOSTNAME
 nixos-generate-config --root /mnt --show-hardware-config > /mnt/etc/nixos/hosts/$HOSTNAME/hardware-configuration.nix
 
 # Checken ob Host-Config existiert
 if [ ! -f "/mnt/etc/nixos/hosts/$HOSTNAME/configuration.nix" ]; then
-    echo -e "${RED}Keine Config für $HOSTNAME gefunden!${NC}"
-    echo "Erstelle Template..."
-    mkdir -p /mnt/etc/nixos/hosts/$HOSTNAME
+    echo "Keine Config für $HOSTNAME gefunden, erstelle Template..."
     cat > /mnt/etc/nixos/hosts/$HOSTNAME/configuration.nix <<EOF
 { config, pkgs, ... }:
 
@@ -55,15 +82,14 @@ if [ ! -f "/mnt/etc/nixos/hosts/$HOSTNAME/configuration.nix" ]; then
   ];
 
   networking.hostName = "$HOSTNAME";
-  
-  # Weitere Host-spezifische Config hier
+  system.stateVersion = "24.05";
 }
 EOF
 fi
 
 # Installation
-echo -e "${GREEN}Starte NixOS Installation...${NC}"
+echo "Starte NixOS Installation..."
 nixos-install --flake /mnt/etc/nixos#$HOSTNAME
 
-echo -e "${GREEN}Installation abgeschlossen!${NC}"
-echo "Bitte Root-Passwort setzen und rebooten."
+echo "Installation abgeschlossen!"
+echo "Bitte rebooten: reboot"
