@@ -12,12 +12,14 @@ git clone <your-repo> /etc/nixos
 cd /etc/nixos
 
 # 2. Bootstrap-Script ausführen
-make bootstrap
+./nixos.sh bootstrap
 
 # 3. Hostname zur flake.nix hinzufügen (siehe unten)
 
 # 4. Fertig!
-sudo nixos-rebuild switch --flake .#<dein-hostname>
+./nixos.sh switch <dein-hostname>
+# oder direkt:
+# sudo nixos-rebuild switch --flake .#<dein-hostname>
 ```
 
 ## Option 2: Manuell
@@ -99,11 +101,17 @@ nix-config/
 ## Nützliche Befehle
 
 ```bash
-make help                    # Alle Befehle anzeigen
-make bootstrap              # Neuen Host erstellen (interaktiv)
-make list-hosts             # Alle konfigurierten Hosts auflisten
-make switch HOSTNAME=laptop1 # Zu Config wechseln
-make update                 # Flake inputs aktualisieren
+./nixos.sh help             # Alle Befehle anzeigen
+./nixos.sh bootstrap        # Neuen Host erstellen (interaktiv)
+./nixos.sh list             # Alle konfigurierten Hosts auflisten
+./nixos.sh switch laptop1   # Zu Config wechseln
+./nixos.sh update           # Flake inputs aktualisieren
+./nixos.sh test laptop1     # Config testen ohne zu aktivieren
+./nixos.sh clean            # Alte Generationen aufräumen
+
+# Oder direkt mit nixos-rebuild:
+sudo nixos-rebuild switch --flake .#laptop1
+sudo nixos-rebuild test --flake .#laptop1
 ```
 
 ## Tipps
