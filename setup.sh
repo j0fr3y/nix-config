@@ -51,10 +51,16 @@ fi
 # Partitionieren (UEFI)
 # =========================
 parted -s "$DISK" mklabel gpt
+
+# EFI
 parted -s "$DISK" mkpart ESP fat32 1MiB 512MiB
 parted -s "$DISK" set 1 esp on
-parted -s "$DISK" mkpart primary ext4 512MiB -2GiB
-parted -s "$DISK" mkpart primary linux-swap -2GiB 100%
+
+# Root: von 512MiB bis "2GiB vor Ende"
+parted -s "$DISK" mkpart primary ext4 512MiB 100%-2GiB
+
+# Swap: letzte 2GiB
+parted -s "$DISK" mkpart primary linux-swap 100%-2GiB 100%
 
 # =========================
 # Formatieren
