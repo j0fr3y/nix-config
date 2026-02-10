@@ -88,24 +88,53 @@ cat > "$HOST_DIR/configuration.nix" <<EOF
 EOF
 
 echo -e "${GREEN}Host configuration created at: $HOST_DIR${NC}"
+
+# Automatically add host to flake.nix
+echo ""
+echo -e "${GREEN}Adding host to flake.nix...${NC}"
+
+FLAKE_FILE="$CONFIG_ROOT/flake.nix"
+if [ ! -f "$FLAKE_FILE" ]; then
+    echo -e "${RED}Error: flake.nix not found${NC}"
+    exit 1
+fi
+
+# Backup flake.nix
+cp "$FLAKE_FILE" "$FLAKE_FILE.backup"
+echo -e "${YELLOW}Backup created: flake.nix.backup${NC}"
+
+# Check if host already exists in flake.nix
+if grep -q "^      $HOSTNAME = mkSystem" "$FLAKE_FILE"; then
+    echo -e "${YELLOW}Host '$HOSTNAME' already exists in flake.nix${NC}"
+else
+    # Find the line with "# Add your laptops and servers here:" and insert after it
+    if grep -q "# Add your laptops and servers here:" "$FLAKE_FILE"; then
+        # Insert new host after the comment line
+        sed -i.tmp "/# Add your laptops and servers here:/a\\
+      $HOSTNAME = mkSystem \"$HOSTNAME\" \"$TYPE\";
+" "$FLAKE_FILE"
+        rm -f "$FLAKE_FILE.tmp"
+        echo -e "${GREEN}✓ Added $HOSTNAME to flake.nix${NC}"
+    else
+        # Fallback: try to insert before the closing brace of nixosConfigurations
+        sed -i.tmp "/^    };$/i\\
+      $HOSTNAME = mkSystem \"$HOSTNAME\" \"$TYPE\";
+" "$FLAKE_FILE"
+        rm -f "$FLAKE_FILE.tmp"
+        echo -e "${GREEN}✓ Added $HOSTNAME to flake.nix${NC}"
+    fi
+fi
+
+echo ""
+echo -e "${GREEN}=== Setup Complete! ===${NC}"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
-echo "1. Edit $HOST_DIR/configuration.nix for host-specific settings"
-echo "2. Add this host to flake.nix:"
+echo "1. Review the generated configuration in: $HOST_DIR"
+echo "2. Activate the configuration:"
 echo ""
-echo "   $HOSTNAME = nixpkgs.lib.nixosSystem {"
-echo "     system = \"x86_64-linux\";"
-echo "     modules = ["
-echo "       ./hosts/$HOSTNAME/configuration.nix"
-echo "       home-manager.nixosModules.home-manager"
-echo "       {"
-echo "         home-manager.useGlobalPkgs = true;"
-echo "         home-manager.useUserPackages = true;"
-echo "         home-manager.users.user = import ./home/$TYPE.nix;"
-echo "       }"
-echo "     ];"
-echo "   };"
+echo -e "   ${GREEN}./nixos.sh switch $HOSTNAME${NC}"
 echo ""
-echo "3. Run: sudo nixos-rebuild switch --flake .#$HOSTNAME"
+echo "   or directly:"
+echo -e "   ${GREEN}sudo nixos-rebuild switch --flake .#$HOSTNAME${NC}"
 echo ""
 echo -e "${GREEN}Done!${NC}"
